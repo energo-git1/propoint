@@ -7,7 +7,7 @@ const multer = require('multer');
 const nodemailer = require('nodemailer');
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3003;
 
 const DATA_DIR   = process.env.WEBSITE_SITE_NAME ? '/home/data' : __dirname;
 const DB_FILE    = path.join(DATA_DIR, 'propoint.db');
@@ -104,7 +104,7 @@ const mailer = nodemailer.createTransport({
 });
 const MAIL_FROM = 'propoint@energolt.eu';
 const ADMIN_EMAIL = 'tomas.ruzveltas@energolt.eu';
-const APP_URL = process.env.APP_URL || 'http://10.2.1.115:3001';
+const APP_URL = process.env.APP_URL || 'http://10.2.1.115:3003';
 
 // ── Users API ─────────────────────────────────────────────────
 
