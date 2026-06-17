@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Propoint v1.1.1</title>
+<title>Propoint v1.1.2</title>
 <script src="/react.min.js"></script>
 <script src="/react-dom.min.js"></script>
 <script src="/babel.min.js"></script>
@@ -167,7 +167,7 @@ window.onerror = function(msg, src, line, col, err) {
     'JS klaida: ' + msg + '\nFailas: ' + src + ':' + line + '\n\n' + (err&&err.stack||'') + '</pre>';
 };
 </script>
-<script type="text/babel">
+<script type="text/babel" data-presets="react">
 const { useState, useEffect, useCallback, useRef } = React;
 
 // ── Constants ─────────────────────────────────────────────────
@@ -184,7 +184,7 @@ const STATUS_LABELS = Object.fromEntries(STATUSES.map(s => [s.key, s.label]));
 const STATUS_CLS    = Object.fromEntries(STATUSES.map(s => [s.key, s.cls]));
 const PRIORITIES = ['Aukštas','Vidutinis','Žemas'];
 const ROLE_LABELS = { admin:'Komandos vadovas', designer:'Projektuotojas', pending:'Laukiama rolės' };
-const VERSION = '1.1.1';
+const VERSION = '1.1.2';
 
 // ── API helpers ───────────────────────────────────────────────
 async function api(method, path, body) {
