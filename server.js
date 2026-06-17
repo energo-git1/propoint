@@ -1,3 +1,4 @@
+const { exec } = require('child_process');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -525,6 +526,16 @@ app.post('/api/reminders/check', async (req, res) => {
   }
   console.log(`  🔔 Priminimai: išsiųsta ${sent}`);
   res.json({ sent, notified });
+});
+
+// ── Deploy endpoint ─────────────────────────────────────────
+app.post('/api/admin/deploy', (req, res) => {
+  const dir = __dirname;
+  exec(`cd ${dir} && git pull && npm install --omit=dev && pm2 restart propoint`, { timeout: 120000 }, (err, stdout, stderr) => {
+    res.json({ ok: true, err: err ? err.message : null });
+    if (!err) console.log('[DEPLOY] git pull + npm install + pm2 restart OK');
+    else console.error('[DEPLOY] Klaida:', err.message);
+  });
 });
 
 // ── Fallback ──────────────────────────────────────────────────
