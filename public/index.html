@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Propoint v1.0.0</title>
-<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<title>Propoint v1.1.0</title>
+<script src="/react.min.js"></script>
+<script src="/react-dom.min.js"></script>
+<script src="/babel.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Segoe UI',Arial,sans-serif;background:#F0F4F8;color:#1A202C;min-height:100vh}
@@ -177,7 +177,7 @@ const STATUS_LABELS = Object.fromEntries(STATUSES.map(s => [s.key, s.label]));
 const STATUS_CLS    = Object.fromEntries(STATUSES.map(s => [s.key, s.cls]));
 const PRIORITIES = ['Aukštas','Vidutinis','Žemas'];
 const ROLE_LABELS = { admin:'Komandos vadovas', designer:'Projektuotojas', pending:'Laukiama rolės' };
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 
 // ── API helpers ───────────────────────────────────────────────
 async function api(method, path, body) {
