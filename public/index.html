@@ -3,10 +3,15 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Propoint v1.1.2</title>
+<title>Propoint v1.1.3</title>
 <script src="/react.min.js"></script>
 <script src="/react-dom.min.js"></script>
 <script src="/babel.min.js"></script>
+<script>
+Babel.registerPreset('jsx', {
+  presets: [[Babel.availablePresets['react'], { runtime: 'classic' }]]
+});
+</script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Segoe UI',Arial,sans-serif;background:#F0F4F8;color:#1A202C;min-height:100vh}
@@ -167,7 +172,7 @@ window.onerror = function(msg, src, line, col, err) {
     'JS klaida: ' + msg + '\nFailas: ' + src + ':' + line + '\n\n' + (err&&err.stack||'') + '</pre>';
 };
 </script>
-<script type="text/babel" data-presets="react">
+<script type="text/babel" data-presets="jsx">
 const { useState, useEffect, useCallback, useRef } = React;
 
 // ── Constants ─────────────────────────────────────────────────
@@ -184,7 +189,7 @@ const STATUS_LABELS = Object.fromEntries(STATUSES.map(s => [s.key, s.label]));
 const STATUS_CLS    = Object.fromEntries(STATUSES.map(s => [s.key, s.cls]));
 const PRIORITIES = ['Aukštas','Vidutinis','Žemas'];
 const ROLE_LABELS = { admin:'Komandos vadovas', designer:'Projektuotojas', pending:'Laukiama rolės' };
-const VERSION = '1.1.2';
+const VERSION = '1.1.3';
 
 // ── API helpers ───────────────────────────────────────────────
 async function api(method, path, body) {
