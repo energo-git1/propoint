@@ -1,7 +1,8 @@
-const { exec } = require('child_process');
+const { exec, execSync } = require('child_process');
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const ldap = require('ldapjs');
 const Database = require('better-sqlite3');
 const multer = require('multer');
@@ -15,11 +16,18 @@ const DB_FILE    = path.join(DATA_DIR, 'propoint.db');
 const UPLOAD_DIR = process.env.WEBSITE_SITE_NAME ? '/home/data/uploads' : path.join(__dirname, 'uploads');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-const MAX_FILE_SIZE    = 500 * 1024 * 1024;
-const MAX_FILENAME_LEN = 70;
+const MAX_FILE_SIZE         = 500 * 1024 * 1024;
+const MAX_FILENAME_LEN      = 70;
+const FILE_RETENTION_DAYS   = 90; // senų įkeltų failų valymas po 90 dienų
 
 function srvUid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 function safeName(name) { return name.replace(/[^a-zA-Z0-9.\-_À-ž]/g, '_').slice(0, 200); }
+function fmtDateSrv(d) {
+  if (!d) return '—';
+  const dt = d instanceof Date ? d : new Date(d);
+  if (isNaN(dt)) return String(d);
+  return dt.toLocaleDateString('lt-LT', { year: 'numeric', month: '2-digit', day: '2-digit' });
+}
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -96,16 +104,26 @@ function dbSet(key, value) {
 })();
 
 // ── Email ─────────────────────────────────────────────────────
-const mailer = nodemailer.createTransport({
-  host: '10.2.1.103',
-  port: 25,
-  secure: false,
-  auth: false,
-  tls: { rejectUnauthorized: false },
-});
-const MAIL_FROM = 'propoint@energolt.eu';
+const MAIL_FROM   = 'propoint@energolt.eu';
 const ADMIN_EMAIL = 'tomas.ruzveltas@energolt.eu';
-const APP_URL = process.env.APP_URL || 'http://10.2.1.115:3003';
+const APP_URL     = process.env.APP_URL || 'http://10.2.1.115:3003';
+
+let mailer;
+function refreshMailer() {
+  try { if (mailer) mailer.close(); } catch (_) {}
+  mailer = nodemailer.createTransport({
+    host: process.env.SMTP_HOST || '10.2.1.103',
+    port: parseInt(process.env.SMTP_PORT || '25', 10),
+    secure: false,
+    auth: false,
+    tls: { rejectUnauthorized: false },
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 30000,
+  });
+}
+refreshMailer();
+setInterval(refreshMailer, 30 * 60 * 1000); // atnaujinti SMTP ryšį kas 30 min
 
 // ── Users API ─────────────────────────────────────────────────
 
@@ -279,13 +297,25 @@ app.post('/api/coordinations/:id/send', async (req, res) => {
   if (!to || !subject) return res.status(400).json({ error: 'Trūksta gavėjo arba temos.' });
   try {
     await mailer.sendMail({ from: MAIL_FROM, to, subject, html: body || subject });
-    list[idx] = { ...coord, sentAt: new Date().toISOString(), status: 'sent', sentTo: to, updatedAt: new Date().toISOString() };
+    list[idx] = { ...coord, sentAt: new Date().toISOString(), status: 'sent', sentTo: to, sentSubject: subject, updatedAt: new Date().toISOString() };
     dbSet('pp-coordinations', list);
     console.log(`  📨 Derinimo laiškas → ${to} | ${subject}`);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// Pažymėti koordinaciją kaip atsakytą
+app.post('/api/coordinations/:id/responded', (req, res) => {
+  const list = dbGet('pp-coordinations') || [];
+  const idx = list.findIndex((c) => c.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Derinimas nerastas.' });
+  const { note, from } = req.body;
+  list[idx] = { ...list[idx], status: 'responded', responseAt: new Date().toISOString(), responseNote: note || '', responseFrom: from || '', updatedAt: new Date().toISOString() };
+  dbSet('pp-coordinations', list);
+  console.log(`  ✅ Koordinacija atsakyta: ${list[idx].institution}`);
+  res.json({ ok: true });
 });
 
 // ── Generic email send ────────────────────────────────────────
@@ -487,8 +517,21 @@ app.patch('/api/users/:id/email', (req, res) => {
   res.json({ user: safeUser });
 });
 
+app.patch('/api/users/:id/contact', (req, res) => {
+  const users = dbGet('pp-users') || [];
+  const user = users.find((u) => u.id === req.params.id);
+  if (!user) return res.status(404).json({ error: 'Vartotojas nerastas.' });
+  const { email, phone, position } = req.body;
+  const updated = { ...user };
+  if (email    !== undefined) updated.email    = email.trim();
+  if (phone    !== undefined) updated.phone    = phone.trim();
+  if (position !== undefined) updated.position = position.trim();
+  dbSet('pp-users', users.map((u) => (u.id === req.params.id ? updated : u)));
+  const { password: _, ...safeUser } = updated;
+  res.json({ user: safeUser });
+});
+
 // ── Reminders ─────────────────────────────────────────────────
-// Check for overdue tasks and send reminder emails (called by cron or manually)
 app.post('/api/reminders/check', async (req, res) => {
   const tasks = dbGet('pp-tasks') || [];
   const users = dbGet('pp-users') || [];
@@ -528,6 +571,84 @@ app.post('/api/reminders/check', async (req, res) => {
   res.json({ sent, notified });
 });
 
+// ── IMAP: koordinacinių atsakymų tikrinimas ───────────────────
+const IMAP_HOST   = process.env.IMAP_HOST   || '';
+const IMAP_PORT   = parseInt(process.env.IMAP_PORT   || '993', 10);
+const IMAP_USER   = process.env.IMAP_USER   || '';
+const IMAP_PASS   = process.env.IMAP_PASS   || '';
+const IMAP_FOLDER = process.env.IMAP_FOLDER || 'INBOX';
+
+app.post('/api/imap/check', async (req, res) => {
+  if (!IMAP_HOST || !IMAP_USER || !IMAP_PASS)
+    return res.status(503).json({ error: 'IMAP nekonfiguruotas. Nustatykite IMAP_HOST, IMAP_USER, IMAP_PASS per PM2.' });
+
+  let ImapFlow;
+  try { ({ ImapFlow } = require('imapflow')); }
+  catch (_) { return res.status(503).json({ error: 'imapflow modulis nerastas. Paleiskite: npm install imapflow' }); }
+
+  const client = new ImapFlow({
+    host: IMAP_HOST, port: IMAP_PORT,
+    secure: IMAP_PORT === 993,
+    auth: { user: IMAP_USER, pass: IMAP_PASS },
+    logger: false,
+  });
+
+  try {
+    await client.connect();
+    const lock = await client.getMailboxLock(IMAP_FOLDER);
+    const emails = [];
+    try {
+      const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      for await (const msg of client.fetch({ since }, { envelope: true, uid: true })) {
+        emails.push({
+          uid: msg.uid,
+          from: msg.envelope.from?.[0]?.address || '',
+          fromName: msg.envelope.from?.[0]?.name || '',
+          subject: msg.envelope.subject || '',
+          date: msg.envelope.date,
+        });
+      }
+    } finally { lock.release(); }
+    await client.logout();
+
+    const coordinations = (dbGet('pp-coordinations') || []).filter((c) => c.status === 'sent' && !c.responseAt);
+    const matched = [];
+    for (const email of emails) {
+      const subj = (email.subject || '').toLowerCase();
+      for (const coord of coordinations) {
+        const sent = (coord.sentSubject || coord.subject || '').toLowerCase().slice(0, 30);
+        if (sent && (subj.includes(sent) || subj.startsWith('re:'))) {
+          matched.push({ emailUid: email.uid, coordId: coord.id, subject: email.subject, from: email.from, date: email.date });
+        }
+      }
+    }
+
+    console.log(`  IMAP: rasta ${emails.length} laisku, sutapo ${matched.length}`);
+    res.json({ ok: true, total: emails.length, matched });
+  } catch (e) {
+    console.error('  IMAP klaida:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Failų valymas ─────────────────────────────────────────────
+function cleanOldFiles() {
+  if (!FILE_RETENTION_DAYS) return;
+  try {
+    const cutoff = Date.now() - FILE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    const files = fs.readdirSync(UPLOAD_DIR);
+    let removed = 0;
+    for (const f of files) {
+      const fp = path.join(UPLOAD_DIR, f);
+      try {
+        const stat = fs.statSync(fp);
+        if (stat.mtimeMs < cutoff) { fs.unlinkSync(fp); removed++; }
+      } catch (_) {}
+    }
+    if (removed > 0) console.log(`  Pasalinta senu failu: ${removed}`);
+  } catch (e) { console.error('  Failu valymo klaida:', e.message); }
+}
+
 // ── Deploy endpoint ─────────────────────────────────────────
 app.post('/api/admin/deploy', (req, res) => {
   const dir = __dirname;
@@ -544,6 +665,9 @@ app.get('*', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`\n  🏗️  Propoint veikia: http://localhost:${PORT}\n`);
-  console.log(`  🗄️  Duomenų bazė: ${DB_FILE}`);
+  console.log(`\n  Propoint veikia: http://localhost:${PORT}`);
+  console.log(`  Duomenu baze: ${DB_FILE}`);
+  console.log(`  Serveris: ${os.hostname()} | Node ${process.version}\n`);
+  cleanOldFiles();
+  setInterval(cleanOldFiles, 24 * 60 * 60 * 1000);
 });
