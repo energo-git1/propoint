@@ -670,6 +670,24 @@ function cleanOldFiles() {
   } catch (e) { console.error('  Failų valymo klaida:', e.message); }
 }
 
+// ── Auto-update: tikrina git kas 5 min ───────────────────────
+function checkForUpdates() {
+  const dir = __dirname;
+  exec(`cd ${dir} && git fetch origin 2>&1`, { timeout: 15000 }, (fetchErr) => {
+    if (fetchErr) return; // tinklo klaida — tyliai ignoruojam
+    exec(`cd ${dir} && git rev-parse HEAD && git rev-parse origin/main`, { timeout: 5000 }, (err, stdout) => {
+      if (err) return;
+      const [local, remote] = stdout.trim().split('\n');
+      if (!local || !remote || local === remote) return; // naujinimų nėra
+      console.log(`  🔄 Rastas naujas commit (${remote.slice(0, 7)}) — atnaujiname...`);
+      exec(`cd ${dir} && git pull && npm install --omit=dev && pm2 restart propoint`, { timeout: 120000 }, (deployErr) => {
+        if (deployErr) console.error('  ❌ Auto-update klaida:', deployErr.message);
+        else console.log('  ✅ Auto-update sėkmingas');
+      });
+    });
+  });
+}
+
 // ── Deploy endpoint ─────────────────────────────────────────
 app.post('/api/admin/deploy', (req, res) => {
   const dir = __dirname;
@@ -691,4 +709,6 @@ app.listen(PORT, () => {
   console.log(`  Serveris: ${os.hostname()} | Node ${process.version}\n`);
   cleanOldFiles();
   setInterval(cleanOldFiles, 24 * 60 * 60 * 1000);
+  setTimeout(checkForUpdates, 30 * 1000);           // pirmasis patikrinimas po 30 sek
+  setInterval(checkForUpdates, 5 * 60 * 1000);      // toliau kas 5 min
 });
