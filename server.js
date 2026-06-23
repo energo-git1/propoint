@@ -7,6 +7,7 @@ const ldap = require('ldapjs');
 const Database = require('better-sqlite3');
 const multer = require('multer');
 const nodemailer = require('nodemailer');
+const { ImapFlow } = require('imapflow');
 
 const app = express();
 const PORT = process.env.PORT || 3003;
@@ -149,6 +150,9 @@ app.get('/api/store/:key', (req, res) => {
 });
 
 app.put('/api/store/:key', (req, res) => {
+  const PROTECTED = ['pp-users', 'pp-tasks', 'pp-coordinations'];
+  if (PROTECTED.includes(req.params.key))
+    return res.status(403).json({ error: 'Šį saugyklos raktą draudžiama keisti tiesiogiai.' });
   dbSet(req.params.key, req.body.value);
   res.json({ ok: true });
 });
@@ -160,7 +164,7 @@ app.post('/api/tasks', (req, res) => {
   const task = req.body;
   if (!task || !task.id) return res.status(400).json({ error: 'Trūksta duomenų.' });
   const tasks = dbGet('pp-tasks') || [];
-  if (tasks.find((t) => t.id === task.id)) return res.json({ ok: true });
+  if (tasks.find((t) => t.id === task.id)) return res.status(409).json({ error: 'Užduotis su tokiu ID jau egzistuoja.' });
   dbSet('pp-tasks', [task, ...tasks]);
   console.log(`  📋 Užduotis sukurta: ${task.name} (${task.id})`);
   res.json({ ok: true });
@@ -175,6 +179,9 @@ app.get('/api/tasks', (req, res) => {
 app.patch('/api/tasks/:id', (req, res) => {
   const { id } = req.params;
   const update = req.body;
+  const VALID_STATUSES = ['new', 'assigned', 'in_progress', 'coordination', 'review', 'completed', 'rejected'];
+  if (update.status !== undefined && !VALID_STATUSES.includes(update.status))
+    return res.status(400).json({ error: `Neteisinga užduoties būsena: ${update.status}` });
   const tasks = dbGet('pp-tasks') || [];
   const idx = tasks.findIndex((t) => t.id === id);
   if (idx === -1) return res.status(404).json({ error: 'Užduotis nerasta.' });
@@ -282,7 +289,9 @@ app.patch('/api/coordinations/:id', (req, res) => {
 
 app.delete('/api/coordinations/:id', (req, res) => {
   const list = dbGet('pp-coordinations') || [];
-  dbSet('pp-coordinations', list.filter((c) => c.id !== req.params.id));
+  const filtered = list.filter((c) => c.id !== req.params.id);
+  if (filtered.length === list.length) return res.status(404).json({ error: 'Derinimas nerastas.' });
+  dbSet('pp-coordinations', filtered);
   res.json({ ok: true });
 });
 
@@ -348,6 +357,10 @@ app.delete('/api/files/:filename', (req, res) => {
   if (!filename || filename.includes('..') || /[/\\]/.test(filename))
     return res.status(400).json({ error: 'Neteisingas failo pavadinimas.' });
   const filePath = path.join(UPLOAD_DIR, filename);
+  const resolved = path.resolve(filePath);
+  const uploadResolved = path.resolve(UPLOAD_DIR);
+  if (!resolved.startsWith(uploadResolved + path.sep) && resolved !== uploadResolved)
+    return res.status(400).json({ error: 'Neteisinga failo vieta.' });
   try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (e) {
     return res.status(500).json({ error: 'Klaida trinant failą.' });
   }
@@ -459,7 +472,8 @@ function finishLogin(res, username, email, displayName) {
     user = { ...user, name: displayName, email: email || user.email, username };
     dbSet('pp-users', users.map((u) => (u.id === user.id ? user : u)));
   }
-  res.json({ user });
+  const { password: _pw, ...safeUser } = user;
+  res.json({ user: safeUser });
 }
 
 // ── Users management ──────────────────────────────────────────
@@ -470,9 +484,11 @@ app.post('/api/users', (req, res) => {
   if (!name || !email || !password || !role) return res.status(400).json({ error: 'Trūksta duomenų.' });
   if (!ALLOWED.includes(role)) return res.status(400).json({ error: 'Neteisinga rolė.' });
   if (password.length < 4) return res.status(400).json({ error: 'Slaptažodis per trumpas.' });
+  const username = email.trim().split('@')[0].toLowerCase();
   const users = dbGet('pp-users') || [];
   if (users.find((u) => !u.adAuth && u.email === email.trim())) return res.status(409).json({ error: 'El. paštas jau naudojamas.' });
-  const newUser = { id: srvUid(), name: name.trim(), email: email.trim(), password, role, adAuth: false, mustChangePassword: true, createdAt: new Date().toISOString() };
+  if (users.find((u) => !u.adAuth && u.username === username)) return res.status(409).json({ error: 'Vartotojo vardas iš šio el. pašto jau naudojamas.' });
+  const newUser = { id: srvUid(), name: name.trim(), username, email: email.trim(), password, role, adAuth: false, mustChangePassword: true, createdAt: new Date().toISOString() };
   dbSet('pp-users', [...users, newUser]);
   const { password: _pw, ...safeUser } = newUser;
   res.status(201).json({ user: safeUser });
@@ -582,10 +598,6 @@ app.post('/api/imap/check', async (req, res) => {
   if (!IMAP_HOST || !IMAP_USER || !IMAP_PASS)
     return res.status(503).json({ error: 'IMAP nekonfiguruotas. Nustatykite IMAP_HOST, IMAP_USER, IMAP_PASS per PM2.' });
 
-  let ImapFlow;
-  try { ({ ImapFlow } = require('imapflow')); }
-  catch (_) { return res.status(503).json({ error: 'imapflow modulis nerastas. Paleiskite: npm install imapflow' }); }
-
   const client = new ImapFlow({
     host: IMAP_HOST, port: IMAP_PORT,
     secure: IMAP_PORT === 993,
@@ -617,7 +629,7 @@ app.post('/api/imap/check', async (req, res) => {
       const subj = (email.subject || '').toLowerCase();
       for (const coord of coordinations) {
         const sent = (coord.sentSubject || coord.subject || '').toLowerCase().slice(0, 30);
-        if (sent && (subj.includes(sent) || subj.startsWith('re:'))) {
+        if (sent && subj.includes(sent)) {
           matched.push({ emailUid: email.uid, coordId: coord.id, subject: email.subject, from: email.from, date: email.date });
         }
       }
@@ -637,16 +649,25 @@ function cleanOldFiles() {
   try {
     const cutoff = Date.now() - FILE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
     const files = fs.readdirSync(UPLOAD_DIR);
+    // Surinkti visus failų pavadinimus, kurie naudojami užduočių prieduose
+    const tasks = dbGet('pp-tasks') || [];
+    const referenced = new Set();
+    for (const t of tasks) {
+      for (const f of (t.attachments || [])) {
+        if (f.filename) referenced.add(f.filename);
+      }
+    }
     let removed = 0;
     for (const f of files) {
+      if (referenced.has(f)) continue; // failą naudoja užduotis — nekeičiame
       const fp = path.join(UPLOAD_DIR, f);
       try {
         const stat = fs.statSync(fp);
         if (stat.mtimeMs < cutoff) { fs.unlinkSync(fp); removed++; }
       } catch (_) {}
     }
-    if (removed > 0) console.log(`  Pasalinta senu failu: ${removed}`);
-  } catch (e) { console.error('  Failu valymo klaida:', e.message); }
+    if (removed > 0) console.log(`  Pasalinta senų failų: ${removed}`);
+  } catch (e) { console.error('  Failų valymo klaida:', e.message); }
 }
 
 // ── Deploy endpoint ─────────────────────────────────────────
