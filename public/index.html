@@ -188,7 +188,7 @@ const STATUSES = [
 const STATUS_LABELS = Object.fromEntries(STATUSES.map(s => [s.key, s.label]));
 const STATUS_CLS    = Object.fromEntries(STATUSES.map(s => [s.key, s.cls]));
 const PRIORITIES = ['Aukštas','Vidutinis','Žemas'];
-const ROLE_LABELS = { admin:'Komandos vadovas', designer:'Projektuotojas', pending:'Laukiama rolės' };
+const ROLE_LABELS = { admin:'Administratorius', manager:'Komandos vadovas', designer:'Projektuotojas', pending:'Laukiama rolės' };
 const VERSION = '1.1.4';
 
 // ── API helpers ───────────────────────────────────────────────
@@ -345,7 +345,7 @@ function PendingPage({ user, onLogout }) {
         <h2 style={{marginBottom:8}}>Laukiama rolės priskyrimo</h2>
         <p style={{color:'var(--gray)',fontSize:14,marginBottom:24}}>
           Sveiki, <strong>{user.name}</strong>! Jūsų paskyra sėkmingai sukurta.
-          Komandos vadovas turi priskirti jums rolę prieš pradedant darbą.
+          Administratorius arba komandos vadovas turi priskirti jums rolę prieš pradedant darbą.
         </p>
         <button className="btn btn-secondary" onClick={onLogout}>Atsijungti</button>
       </div>
@@ -483,7 +483,7 @@ function AssignModal({ task, designers, currentUser, onSave, onClose }) {
 
 // ── Task Detail Modal ─────────────────────────────────────────
 function TaskDetailModal({ task, users, currentUser, onUpdate, onClose }) {
-  const isAdmin = currentUser.role === 'admin';
+  const isAdmin = ['admin','manager'].includes(currentUser.role);
   const [status, setStatus] = useState(task.status);
   const [note, setNote] = useState('');
   const [loading, setLoading] = useState(false);
@@ -613,7 +613,7 @@ function TaskDetailModal({ task, users, currentUser, onUpdate, onClose }) {
 
 // ── Tasks Page ────────────────────────────────────────────────
 function TasksPage({ currentUser, users, tasks, onRefresh }) {
-  const isAdmin = currentUser.role === 'admin';
+  const isAdmin = ['admin','manager'].includes(currentUser.role);
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(null);
@@ -730,7 +730,7 @@ function TasksPage({ currentUser, users, tasks, onRefresh }) {
 
 // ── Dashboard ─────────────────────────────────────────────────
 function DashboardPage({ currentUser, tasks, users }) {
-  const isAdmin = currentUser.role === 'admin';
+  const isAdmin = ['admin','manager'].includes(currentUser.role);
   const myTasks = isAdmin ? tasks : tasks.filter(t=>t.assignedTo===currentUser.id);
   const active  = myTasks.filter(t=>!['completed','rejected'].includes(t.status));
   const overdue = myTasks.filter(t=>{
@@ -854,7 +854,7 @@ function NewCoordModal({ tasks, currentUser, onSave, onClose }) {
   const [error, setError] = useState('');
   const set = (k,v)=>setForm(f=>({...f,[k]:v}));
 
-  const myTasks = tasks.filter(t=>currentUser.role==='admin'||t.assignedTo===currentUser.id).filter(t=>!['completed','rejected'].includes(t.status));
+  const myTasks = tasks.filter(t=>['admin','manager'].includes(currentUser.role)||t.assignedTo===currentUser.id).filter(t=>!['completed','rejected'].includes(t.status));
 
   async function submit(e) {
     e.preventDefault();
@@ -926,7 +926,7 @@ function CoordinationsPage({ currentUser, tasks }) {
   const load = () => {
     setLoading(true);
     GET('/api/coordinations').then(data=>{
-      const mine = currentUser.role==='admin' ? data : data.filter(c=>c.createdBy===currentUser.id);
+      const mine = ['admin','manager'].includes(currentUser.role) ? data : data.filter(c=>c.createdBy===currentUser.id);
       setList(mine);
       setLoading(false);
     }).catch(()=>setLoading(false));
@@ -1032,7 +1032,7 @@ function SchedulePage({ currentUser, tasks, users }) {
 
   const tasksInRange = tasks.filter(t=>{
     if(!t.deadline) return false;
-    if(currentUser.role!=='admin'&&t.assignedTo!==currentUser.id) return false;
+    if(!['admin','manager'].includes(currentUser.role)&&t.assignedTo!==currentUser.id) return false;
     const dl = new Date(t.deadline);
     return dl >= weekStart && dl <= weekDays[6];
   });
@@ -1077,7 +1077,7 @@ function SchedulePage({ currentUser, tasks, users }) {
 
       <div className="tabs">
         <div className={`tab ${tab==='tasks'?'active':''}`} onClick={()=>setTab('tasks')}>📋 Užduočių grafikas</div>
-        {currentUser.role==='admin' && <div className={`tab ${tab==='team'?'active':''}`} onClick={()=>setTab('team')}>👥 Darbuotojų grafikas</div>}
+        {['admin','manager'].includes(currentUser.role) && <div className={`tab ${tab==='team'?'active':''}`} onClick={()=>setTab('team')}>👥 Darbuotojų grafikas</div>}
       </div>
 
       {tab==='tasks' && (
@@ -1104,7 +1104,7 @@ function SchedulePage({ currentUser, tasks, users }) {
         </div>
       )}
 
-      {tab==='team' && currentUser.role==='admin' && (
+      {tab==='team' && ['admin','manager'].includes(currentUser.role) && (
         <div className="card" style={{overflowX:'auto'}}>
           <div style={{display:'grid',gridTemplateColumns:`140px repeat(7,1fr)`,gap:0,minWidth:800,border:'1px solid var(--gray-border)',borderRadius:8,overflow:'hidden'}}>
             <div className="sched-header" style={{borderRight:'1px solid var(--gray-border)'}}>Projektuotojas</div>
@@ -1140,7 +1140,7 @@ function SchedulePage({ currentUser, tasks, users }) {
         <div className="card" style={{padding:0}}>
           {tasks.filter(t=>{
             if(!t.deadline||['completed','rejected'].includes(t.status)) return false;
-            if(currentUser.role!=='admin'&&t.assignedTo!==currentUser.id) return false;
+            if(!['admin','manager'].includes(currentUser.role)&&t.assignedTo!==currentUser.id) return false;
             const dl = daysLeft(t.deadline);
             return dl !== null && dl >= 0 && dl <= 14;
           }).sort((a,b)=>new Date(a.deadline)-new Date(b.deadline)).map(t=>{
@@ -1161,7 +1161,7 @@ function SchedulePage({ currentUser, tasks, users }) {
               </div>
             );
           })}
-          {tasks.filter(t=>t.deadline&&!['completed','rejected'].includes(t.status)&&(currentUser.role==='admin'||t.assignedTo===currentUser.id)&&daysLeft(t.deadline)<=14&&daysLeft(t.deadline)>=0).length===0 && (
+          {tasks.filter(t=>t.deadline&&!['completed','rejected'].includes(t.status)&&(['admin','manager'].includes(currentUser.role)||t.assignedTo===currentUser.id)&&daysLeft(t.deadline)<=14&&daysLeft(t.deadline)>=0).length===0 && (
             <div className="empty" style={{padding:'30px 0'}}><div className="icon">🎉</div><p>Artimų terminų nėra</p></div>
           )}
         </div>
@@ -1194,7 +1194,7 @@ function UsersPage({ currentUser }) {
   async function createUser(e) {
     e.preventDefault(); setError('');
     try {
-      await POST('/api/users', newUser);
+      await POST('/api/users', { ...newUser, createdByRole: currentUser.role });
       setSuccess(`Vartotojas ${newUser.name} sukurtas.`);
       setNewUser({ name:'', email:'', password:'', role:'designer' });
       setCreating(false);
@@ -1231,7 +1231,8 @@ function UsersPage({ currentUser }) {
               <div>
                 <label className="form-label">Rolė</label>
                 <select className="form-select" value={newUser.role} onChange={e=>setNewUser(u=>({...u,role:e.target.value}))}>
-                  <option value="admin">Komandos vadovas</option>
+                  {currentUser.role==='admin' && <option value="admin">Administratorius</option>}
+                  {currentUser.role==='admin' && <option value="manager">Komandos vadovas</option>}
                   <option value="designer">Projektuotojas</option>
                 </select>
               </div>
@@ -1268,7 +1269,8 @@ function UsersPage({ currentUser }) {
                     <td>
                       {u.id !== currentUser.id ? (
                         <select className="form-select" style={{fontSize:13,padding:'4px 8px',width:'auto'}} value={u.role} onChange={e=>changeRole(u.id,e.target.value)}>
-                          <option value="admin">Komandos vadovas</option>
+                          {currentUser.role==='admin' && <option value="admin">Administratorius</option>}
+                          {currentUser.role==='admin' && <option value="manager">Komandos vadovas</option>}
                           <option value="designer">Projektuotojas</option>
                           <option value="pending">Laukiama</option>
                         </select>
@@ -1368,7 +1370,7 @@ function App() {
   if(user.mustChangePassword && !user.adAuth) return <ChangePasswordModal user={user} forced onDone={updated=>{setUser(updated);saveSession(updated);}} onClose={()=>{}}/>;
   if(user.role==='pending') return <PendingPage user={user} onLogout={logout}/>;
 
-  const isAdmin = user.role === 'admin';
+  const isAdmin = user.role === 'admin' || user.role === 'manager';
 
   const navItems = [
     { key:'dashboard', icon:'🏠', label:'Pradžia' },

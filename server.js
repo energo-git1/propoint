@@ -479,10 +479,12 @@ function finishLogin(res, username, email, displayName) {
 // ── Users management ──────────────────────────────────────────
 
 app.post('/api/users', (req, res) => {
-  const { name, email, password, role } = req.body;
-  const ALLOWED = ['admin', 'designer'];
+  const { name, email, password, role, createdByRole } = req.body;
+  const ALLOWED = ['admin', 'manager', 'designer'];
   if (!name || !email || !password || !role) return res.status(400).json({ error: 'Trūksta duomenų.' });
   if (!ALLOWED.includes(role)) return res.status(400).json({ error: 'Neteisinga rolė.' });
+  if (createdByRole === 'manager' && role !== 'designer')
+    return res.status(403).json({ error: 'Komandos vadovas gali kurti tik projektuotojų paskyras.' });
   if (password.length < 4) return res.status(400).json({ error: 'Slaptažodis per trumpas.' });
   const username = email.trim().split('@')[0].toLowerCase();
   const users = dbGet('pp-users') || [];
@@ -507,7 +509,7 @@ app.delete('/api/users/:id', (req, res) => {
 });
 
 app.patch('/api/users/:id/role', (req, res) => {
-  const ALLOWED = ['admin', 'designer', 'pending'];
+  const ALLOWED = ['admin', 'manager', 'designer', 'pending'];
   const role = (req.body.role || '').trim();
   if (!ALLOWED.includes(role)) return res.status(400).json({ error: 'Neteisinga rolė.' });
   const users = dbGet('pp-users') || [];
