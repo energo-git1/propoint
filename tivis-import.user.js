@@ -1,17 +1,29 @@
 // ==UserScript==
 // @name         TIVIS → Propoint importas
 // @namespace    https://energolt.eu
-// @version      1.0.0
+// @version      1.0.1
 // @description  Importuoja TIVIS užduotis į Propoint platformą
 // @author       EnergoLT
 // @match        https://tivis.eso.lt/task/index/list*
+// @homepageURL  http://10.2.1.115:3003
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
 // @connect      10.2.1.115
+// @run-at       document-idle
 // ==/UserScript==
 
 (function () {
   'use strict';
+
+  // Palaukti kol Angular pilnai įsikraus
+  function waitForAngular(cb, tries = 0) {
+    if (tries > 60) { console.warn('Propoint: Angular nepasiekiamas'); return; }
+    try {
+      const el = document.querySelector('[ng-controller]');
+      if (el && window.angular && angular.element(el).scope()) { cb(); return; }
+    } catch(e) {}
+    setTimeout(() => waitForAngular(cb, tries + 1), 500);
+  }
 
   const PROPOINT = 'http://10.2.1.115:3003';
 
@@ -85,6 +97,14 @@
     log.innerHTML += msg + '<br>';
     log.scrollTop = log.scrollHeight;
   }
+
+  // Mygtukas aktyvus tik kai Angular pasiruošęs
+  btn.disabled = true;
+  btn.title = 'Laukiama kol puslapis įsikraus...';
+  waitForAngular(() => {
+    btn.disabled = false;
+    btn.title = '';
+  });
 
   // ── Importas ────────────────────────────────────────────────
   btn.addEventListener('click', async () => {
