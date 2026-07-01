@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         TIVIS → Propoint importas
 // @namespace    https://energolt.eu
-// @version      1.1.0
+// @version      1.2.0
 // @description  Importuoja TIVIS užduotis į Propoint platformą
 // @author       EnergoLT
 // @match        https://tivis.eso.lt/*
@@ -24,8 +24,7 @@
   function gmFetch(method, url, body) {
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
-        method,
-        url,
+        method, url,
         headers: { 'Content-Type': 'application/json' },
         data: body ? JSON.stringify(body) : undefined,
         onload: (r) => {
@@ -41,68 +40,37 @@
     });
   }
 
-  // ── Laukų ištraukimas iš detalaus puslapio ──────────────────
-  // Ieško label:value porų (td/dt/label su tekstu → sekantis elementas su reikšme)
-  function extractField(labelText) {
-    const els = document.querySelectorAll('td, th, label, dt, .control-label, .field-label');
-    for (const el of els) {
-      if (el.textContent.trim().replace(/:$/, '').toLowerCase() === labelText.toLowerCase()) {
-        // Sekantis sibling arba parent sekantis
-        const next = el.nextElementSibling || el.closest('tr')?.nextElementSibling?.querySelector('td');
-        if (next) return next.textContent.trim();
+  // ── Ištraukti visus laukus iš detalaus puslapio ─────────────
+  // Struktūra: eilutė "Laukas:" → kita eilutė yra reikšmė
+  function extractAllFields() {
+    const editPage = document.querySelector('#task_edit_page');
+    if (!editPage) return null;
+    const lines = editPage.innerText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    const data = {};
+    for (let i = 0; i < lines.length - 1; i++) {
+      if (lines[i].endsWith(':')) {
+        const key = lines[i].slice(0, -1).trim();
+        const val = lines[i + 1].endsWith(':') ? '' : lines[i + 1].trim();
+        if (val) data[key] = val;
       }
     }
-    // Fallback: ieškoti teksto ir grąžinti po dvitaškio
-    const all = document.body.innerText;
-    const re = new RegExp(labelText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:?\\s*([^\\n]+)', 'i');
-    const m = all.match(re);
-    return m ? m[1].trim() : '';
-  }
-
-  function extractDetailData() {
-    const fields = [
-      'Užsakymo Nr.',
-      'Investicinis numeris',
-      'Objektas',
-      'Objekto adresas',
-      'Administracinis rajonas',
-      'Darbų rūšis',
-      'Užsakymo tipas',
-      'Sutarties numeris',
-      'Sutarties pabaiga',
-      'Preliminarus sutarties likutis',
-      'Rangovas',
-      'Rangovo atstovas',
-      'Rangovo projektų vadovas',
-      'Užsakymo pateikimo data',
-      'Būsena',
-      'Regionas',
-    ];
-    const data = {};
-    for (const f of fields) {
-      data[f] = extractField(f);
-    }
-    return data;
+    return Object.keys(data).length > 2 ? data : null;
   }
 
   // ── Ar esame detalaus užsakymo puslapyje? ───────────────────
   function isDetailPage() {
-    // Detalus puslapis turi "Užsakymo Nr." lauką ir ISSAUGOTI mygtuką
-    const hasOrderNr = !!extractField('Užsakymo Nr.');
-    const hasSave = !!document.querySelector('button[ng-click*="save"], .btn-success, [data-action="save"]');
-    const hasInvNr = !!extractField('Investicinis numeris');
-    return hasOrderNr || hasInvNr || hasSave;
+    return !!document.querySelector('#task_edit_page');
   }
 
   // ── Statusų vertimas ─────────────────────────────────────────
   function mapStatus(busena) {
     const b = (busena || '').toLowerCase();
-    if (b.includes('atmest'))    return 'rejected';
-    if (b.includes('baigt'))     return 'completed';
-    if (b.includes('tikrin'))    return 'review';
-    if (b.includes('derin'))     return 'coordination';
-    if (b.includes('vykdom'))    return 'in_progress';
-    if (b.includes('priskirt'))  return 'assigned';
+    if (b.includes('atmest'))   return 'rejected';
+    if (b.includes('baigt'))    return 'completed';
+    if (b.includes('tikrin'))   return 'review';
+    if (b.includes('derin'))    return 'coordination';
+    if (b.includes('vykdom'))   return 'in_progress';
+    if (b.includes('priskirt')) return 'assigned';
     return 'new';
   }
 
@@ -113,7 +81,7 @@
       background: #2563EB; color: #fff; border: none; border-radius: 10px;
       padding: 12px 20px; font-size: 14px; font-weight: 600;
       cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,.25);
-      display: flex; align-items: center; gap: 8px;
+      display: flex; align-items: center; gap: 8px; transition: background .2s;
     }
     #pp-import-btn:hover { background: #1d4ed8; }
     #pp-import-btn:disabled { background: #64748b; cursor: not-allowed; }
@@ -121,14 +89,16 @@
       position: fixed; bottom: 76px; right: 24px; z-index: 99998;
       background: #0f172a; color: #e2e8f0; border-radius: 10px;
       padding: 14px 16px; font-size: 12px; font-family: monospace;
-      max-height: 340px; width: 380px; overflow-y: auto;
-      box-shadow: 0 4px 24px rgba(0,0,0,.4); display: none;
-      line-height: 1.6;
+      max-height: 360px; width: 400px; overflow-y: auto;
+      box-shadow: 0 4px 24px rgba(0,0,0,.4); display: none; line-height: 1.7;
     }
+    #pp-import-log a { color: #60a5fa; }
   `);
 
   const btn = document.createElement('button');
   btn.id = 'pp-import-btn';
+  btn.innerHTML = '⬆ Importuoti į Propoint';
+  btn.disabled = true;
   document.body.appendChild(btn);
 
   const log = document.createElement('div');
@@ -141,22 +111,24 @@
     log.scrollTop = log.scrollHeight;
   }
 
-  // ── Palaukti kol puslapis pilnai įsikraus ───────────────────
-  function waitReady(cb, tries = 0) {
-    if (tries > 80) return;
-    const ready = document.querySelector('[ng-controller]') || document.querySelector('.container');
-    if (ready) { setTimeout(cb, 300); return; }
-    setTimeout(() => waitReady(cb, tries + 1), 400);
+  // ── Stebėti DOM pokyčius (TIVIS krauna turinį dinamiškai) ───
+  let checkTimer = null;
+  function scheduleCheck() {
+    clearTimeout(checkTimer);
+    checkTimer = setTimeout(() => {
+      const detail = isDetailPage();
+      btn.disabled = false;
+      btn.innerHTML = detail
+        ? '⬆ Importuoti į Propoint'
+        : '⬆ Importuoti viską į Propoint';
+      btn.title = detail
+        ? 'Importuoti šį užsakymą į Propoint'
+        : 'Importuoti visus sąrašo užsakymus į Propoint';
+    }, 600);
   }
 
-  waitReady(() => {
-    const detail = isDetailPage();
-    btn.innerHTML = detail ? '⬆ Importuoti į Propoint' : '⬆ Importuoti viską į Propoint';
-    btn.disabled = false;
-    btn.title = detail
-      ? 'Importuoti šią užduotį į Propoint'
-      : 'Importuoti visas sąrašo užduotis į Propoint';
-  });
+  scheduleCheck();
+  new MutationObserver(scheduleCheck).observe(document.body, { childList: true, subtree: true });
 
   // ── Importas ─────────────────────────────────────────────────
   btn.addEventListener('click', async () => {
@@ -167,49 +139,55 @@
 
     try {
       if (isDetailPage()) {
-        // ── DETALUS PUSLAPIS: importuoti vieną užduotį ────────
-        const d = extractDetailData();
+        // ── DETALUS PUSLAPIS ──────────────────────────────────
+        const d = extractAllFields();
 
-        appendLog(`📋 Užsakymo Nr.: <strong>${d['Užsakymo Nr.'] || '?'}</strong>`);
-        appendLog(`🔑 Inv. nr.: <strong>${d['Investicinis numeris'] || '?'}</strong>`);
-
-        if (!d['Užsakymo Nr.'] && !d['Investicinis numeris']) {
-          appendLog('❌ Nerasta pagrindinių laukų. Patikrinkite ar esate detalaus užsakymo puslapyje.');
+        if (!d || (!d['Užsakymo Nr.'] && !d['Investicinis numeris'])) {
+          appendLog('❌ Nerasta pagrindinių laukų. Palaukite kol puslapis pilnai įsikraus.');
           btn.disabled = false; btn.innerHTML = '⬆ Importuoti į Propoint'; return;
         }
 
+        appendLog(`📋 <strong>${d['Užsakymo Nr.'] || '?'}</strong>`);
+        appendLog(`🔑 Inv. nr.: <strong>${d['Investicinis numeris'] || '?'}</strong>`);
+        appendLog(`📍 ${d['Objektas'] || '?'}`);
+        appendLog(`🏠 ${d['Objekto adresas'] || '?'}`);
+
         // Patikrinti ar jau importuota
         const tivisCode = d['Užsakymo Nr.'];
+        const invNr = d['Investicinis numeris'];
         try {
           const existing = await gmFetch('GET', `${PROPOINT}/api/tasks`);
-          const dup = existing.find(t => t.tivisCode === tivisCode || t.projectNumber === d['Investicinis numeris']);
+          const dup = existing.find(t => t.tivisCode === tivisCode || t.projectNumber === invNr);
           if (dup) {
-            appendLog(`⏭ Jau importuota: <strong>${dup.name}</strong>`);
+            appendLog(`<br>⏭ Jau importuota kaip: <strong>${dup.name}</strong>`);
+            appendLog(`🔗 <a href="${PROPOINT}" target="_blank">Atidaryti Propoint →</a>`);
             btn.disabled = false; btn.innerHTML = '⬆ Importuoti į Propoint'; return;
           }
         } catch(e) {}
 
         const descLines = [
-          d['Darbų rūšis']                   ? `Darbų rūšis: ${d['Darbų rūšis']}`                       : '',
-          d['Užsakymo tipas']                 ? `Užsakymo tipas: ${d['Užsakymo tipas']}`                 : '',
-          d['Sutarties numeris']              ? `Sutarties nr.: ${d['Sutarties numeris']}`                : '',
-          d['Sutarties pabaiga']              ? `Sutarties pabaiga: ${d['Sutarties pabaiga']}`            : '',
-          d['Preliminarus sutarties likutis'] ? `Sutarties likutis: ${d['Preliminarus sutarties likutis']}` : '',
-          d['Rangovas']                       ? `Rangovas: ${d['Rangovas']}`                             : '',
-          d['Rangovo atstovas']               ? `Atstovas: ${d['Rangovo atstovas']}`                     : '',
-          d['Rangovo projektų vadovas']       ? `Proj. vadovas: ${d['Rangovo projektų vadovas']}`        : '',
-          d['Administracinis rajonas']        ? `Rajonas: ${d['Administracinis rajonas']}`               : '',
-          d['Regionas']                       ? `Regionas: ${d['Regionas']}`                             : '',
+          d['Darbų rūšis']                   ? `Darbų rūšis: ${d['Darbų rūšis']}`                          : '',
+          d['Užsakymo tipas']                 ? `Užsakymo tipas: ${d['Užsakymo tipas']}`                    : '',
+          d['Sutarties numeris']              ? `Sutarties nr.: ${d['Sutarties numeris']}`                   : '',
+          d['Sutarties pabaiga']              ? `Sutarties pabaiga: ${d['Sutarties pabaiga']}`               : '',
+          d['Preliminarus sutarties likutis'] ? `Sutarties likutis: ${d['Preliminarus sutarties likutis']}`  : '',
+          d['Rangovas']                       ? `Rangovas: ${d['Rangovas']}`                                : '',
+          d['Rangovo atstovas']               ? `Atstovas: ${d['Rangovo atstovas']}`                        : '',
+          d['Rangovo projektų vadovas']       ? `Proj. vadovas: ${d['Rangovo projektų vadovas']}`           : '',
+          d['Techninis prižiūrėtojas']        ? `Tech. prižiūrėtojas: ${d['Techninis prižiūrėtojas']}`     : '',
+          d['Administracinis rajonas']        ? `Rajonas: ${d['Administracinis rajonas']}`                  : '',
+          d['Regionas']                       ? `Regionas: ${d['Regionas']}`                               : '',
+          d['Užsakymo pateikimo data']        ? `Pateikimo data: ${d['Užsakymo pateikimo data']}`           : '',
         ].filter(Boolean).join('\n');
 
         const task = {
           id:            uid(),
-          tivisCode:     d['Užsakymo Nr.'] || '',
-          projectNumber: d['Investicinis numeris'] || '',
-          name:          d['Objektas'] || d['Investicinis numeris'] || tivisCode,
-          address:       d['Objekto adresas'] || '',
+          tivisCode:     tivisCode || '',
+          projectNumber: invNr || '',
+          name:          d['Objekto adresas'] || d['Objektas'] || invNr || tivisCode,
+          address:       d['Objektas'] || '',
           client:        'ESO',
-          type:          d['Darbų rūšis'] || '',
+          type:          d['Darbų rūšis'] || d['Užsakymo tipas'] || '',
           description:   descLines,
           deadline:      d['Sutarties pabaiga'] || '',
           priority:      'Vidutinis',
@@ -219,37 +197,35 @@
 
         const r = await gmFetch('POST', `${PROPOINT}/api/tasks`, task);
         if (r._skip) {
-          appendLog('⏭ Ši užduotis jau egzistuoja Propoint sistemoje.');
+          appendLog('<br>⏭ Ši užduotis jau egzistuoja Propoint sistemoje.');
         } else {
-          appendLog(`✅ Importuota: <strong>${task.name}</strong>`);
-          appendLog(`   Statusas: ${task.status}`);
-          appendLog(`   Proj. nr.: ${task.projectNumber}`);
-          appendLog(`<br>🔗 <a href="${PROPOINT}" target="_blank" style="color:#60a5fa">Atidaryti Propoint →</a>`);
+          appendLog(`<br>✅ <strong>Sėkmingai importuota!</strong>`);
+          appendLog(`🔗 <a href="${PROPOINT}" target="_blank">Atidaryti Propoint →</a>`);
         }
 
       } else {
-        // ── SĄRAŠO PUSLAPIS: masinis importas ─────────────────
-        // (senoji logika)
-        appendLog('ℹ️ Sąrašo puslapis — masinis importas');
-        const scope = window.angular
-          ? angular.element(document.querySelector('[ng-controller]')).scope()
-          : null;
-        const tivisTasks = scope ? (scope.items || scope.tasks || []) : [];
+        // ── SĄRAŠO PUSLAPIS: masinis importas ────────────────
+        appendLog('📋 Sąrašo puslapis — masinis importas...');
+
+        let tivisTasks = [];
+        try {
+          const scope = angular.element(document.querySelector('[ng-controller]')).scope();
+          tivisTasks = scope.items || scope.tasks || [];
+        } catch(e) {}
 
         if (!tivisTasks.length) {
           appendLog('❌ Užduotys nerastos. Palaukite kol puslapis įsikraus.');
           btn.disabled = false; btn.innerHTML = '⬆ Importuoti viską į Propoint'; return;
         }
-        appendLog(`📂 Rasta: ${tivisTasks.length} užduočių`);
+        appendLog(`📂 Rasta: <strong>${tivisTasks.length}</strong> užduočių`);
 
-        const existingIds = new Set();
         const existing = await gmFetch('GET', `${PROPOINT}/api/tasks`).catch(() => []);
-        for (const t of existing) if (t.tivisCode) existingIds.add(t.tivisCode);
+        const existingCodes = new Set(existing.map(t => t.tivisCode).filter(Boolean));
 
         let imported = 0, skipped = 0, errors = 0;
         for (const t of tivisTasks) {
           const code = t.task_code || t.work_code || String(t.id);
-          if (existingIds.has(code)) { skipped++; continue; }
+          if (existingCodes.has(code)) { skipped++; continue; }
 
           const task = {
             id:            uid(),
@@ -285,6 +261,7 @@
         }
 
         appendLog(`<br>✅ Importuota: <strong>${imported}</strong> | ⏭ Praleista: <strong>${skipped}</strong> | ❌ Klaidos: <strong>${errors}</strong>`);
+        if (imported > 0) appendLog(`🔗 <a href="${PROPOINT}" target="_blank">Atidaryti Propoint →</a>`);
       }
 
     } catch (e) {
