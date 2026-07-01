@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Propoint v1.1.3</title>
+<title>Propoint v1.1.5</title>
 <script src="/react.min.js"></script>
 <script src="/react-dom.min.js"></script>
 <script src="/babel.min.js"></script>
@@ -545,6 +545,7 @@ function TaskDetailModal({ task, users, currentUser, onUpdate, onClose }) {
             <div className={`tab ${coordTab==='status'?'active':''}`} onClick={()=>setCoordTab('status')}>📊 Statusas</div>
             <div className={`tab ${coordTab==='list'?'active':''}`} onClick={()=>setCoordTab('list')}>📨 Derinimai ({coordinations.length})</div>
             <div className={`tab ${coordTab==='notes'?'active':''}`} onClick={()=>setCoordTab('notes')}>📝 Pastabos ({(task.notes||[]).length})</div>
+            <div className={`tab ${coordTab==='files'?'active':''}`} onClick={()=>setCoordTab('files')}>📎 Priedai ({(task.attachments||[]).length})</div>
           </div>
 
           {coordTab==='status' && (
@@ -599,6 +600,29 @@ function TaskDetailModal({ task, users, currentUser, onUpdate, onClose }) {
                     <div key={i} style={{border:'1px solid var(--gray-border)',borderRadius:8,padding:'10px 12px'}}>
                       <div style={{fontSize:13}}>{n.text}</div>
                       <div style={{fontSize:11,color:'var(--gray)',marginTop:4}}>{n.by} · {fmtDt(n.at)}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {coordTab==='files' && (
+            <div>
+              {(task.attachments||[]).length===0 ? (
+                <div className="empty" style={{padding:'30px 0'}}><div className="icon">📎</div><p>Priedų nėra</p></div>
+              ) : (
+                <div style={{display:'flex',flexDirection:'column',gap:8}}>
+                  {(task.attachments||[]).map((f,i)=>(
+                    <div key={f.id||i} style={{display:'flex',alignItems:'center',gap:12,border:'1px solid var(--gray-border)',borderRadius:8,padding:'10px 14px'}}>
+                      <span style={{fontSize:22}}>
+                        {/\.pdf$/i.test(f.name)?'📄':/\.(png|jpg|jpeg|gif|webp)$/i.test(f.name)?'🖼️':/\.(doc|docx)$/i.test(f.name)?'📝':/\.(xls|xlsx)$/i.test(f.name)?'📊':'📎'}
+                      </span>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{f.name}</div>
+                        {f.size && <div style={{fontSize:11,color:'var(--gray)',marginTop:2}}>{f.size>1024*1024?(f.size/1024/1024).toFixed(1)+' MB':(f.size/1024).toFixed(0)+' KB'}</div>}
+                      </div>
+                      <a href={f.url} target="_blank" rel="noopener noreferrer" className="btn btn-secondary btn-xs">⬇ Atidaryti</a>
                     </div>
                   ))}
                 </div>
