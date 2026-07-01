@@ -352,6 +352,21 @@ app.post('/api/upload', (req, res) => {
   });
 });
 
+// Append attachment to existing task
+app.post('/api/tasks/:id/attachments', (req, res) => {
+  const { id } = req.params;
+  const fileInfo = req.body;
+  if (!fileInfo || !fileInfo.filename) return res.status(400).json({ error: 'Trūksta failo informacijos.' });
+  const tasks = dbGet('pp-tasks') || [];
+  const idx = tasks.findIndex((t) => t.id === id);
+  if (idx === -1) return res.status(404).json({ error: 'Užduotis nerasta.' });
+  const attachments = [...(tasks[idx].attachments || []), fileInfo];
+  tasks[idx] = { ...tasks[idx], attachments, updatedAt: new Date().toISOString() };
+  dbSet('pp-tasks', tasks);
+  console.log(`  📎 Priedas pridėtas: ${fileInfo.name} → ${tasks[idx].name}`);
+  res.json({ ok: true });
+});
+
 app.delete('/api/files/:filename', (req, res) => {
   const { filename } = req.params;
   if (!filename || filename.includes('..') || /[/\\]/.test(filename))

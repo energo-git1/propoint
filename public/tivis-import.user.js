@@ -1,14 +1,15 @@
 // ==UserScript==
 // @name         TIVIS → Propoint importas
 // @namespace    https://energolt.eu
-// @version      1.2.0
-// @description  Importuoja TIVIS užduotis į Propoint platformą
+// @version      1.3.0
+// @description  Importuoja TIVIS užduotis į Propoint platformą (su dokumentais)
 // @author       EnergoLT
 // @match        https://tivis.eso.lt/*
 // @homepageURL  http://10.2.1.115:3003
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
 // @connect      10.2.1.115
+// @connect      tivis.eso.lt
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -40,8 +41,105 @@
     });
   }
 
+  // ── Atsisiųsti failą iš TIVIS (binary) ───────────────────────
+  function downloadBinary(url) {
+    return new Promise((resolve, reject) => {
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url,
+        responseType: 'arraybuffer',
+        onload: (r) => {
+          if (r.status === 200) resolve(r.response);
+          else reject(new Error(`HTTP ${r.status}`));
+        },
+        onerror: () => reject(new Error('Atsisiuntimo klaida')),
+      });
+    });
+  }
+
+  // ── Įkelti failą į Propoint ───────────────────────────────────
+  function uploadToPropoint(arrayBuffer, fileName) {
+    return new Promise((resolve, reject) => {
+      const blob = new Blob([arrayBuffer]);
+      const formData = new FormData();
+      formData.append('file', blob, fileName);
+      GM_xmlhttpRequest({
+        method: 'POST',
+        url: `${PROPOINT}/api/upload`,
+        data: formData,
+        onload: (r) => {
+          try {
+            const json = JSON.parse(r.responseText);
+            if (r.status >= 400) reject(new Error(json.error || 'Įkėlimo klaida'));
+            else resolve(json);
+          } catch (e) { reject(new Error('Parse error')); }
+        },
+        onerror: () => reject(new Error('Įkėlimo tinklo klaida')),
+      });
+    });
+  }
+
+  // ── Ištraukti ir įkelti dokumentus ───────────────────────────
+  // Perleidžiame per visus dokumentų nuorodas, intercept'iname
+  // window.open() ir parsisiunčiame failus per GM_xmlhttpRequest.
+  async function extractAndUploadDocs(taskId, appendLog) {
+    const links = Array.from(document.querySelectorAll('[ng-click*="downloadDocument"]'));
+    if (!links.length) return 0;
+
+    appendLog(`<br>📎 Randama dokumentų: <strong>${links.length}</strong>`);
+
+    // Interceptuoti window.open kad sužinoti URL
+    const origOpen = unsafeWindow.open;
+    let capturedUrl = null;
+    unsafeWindow.open = function(url) {
+      capturedUrl = String(url);
+      return null; // neleidžiame atidaryti naujo lango
+    };
+
+    let uploaded = 0;
+    for (const link of links) {
+      const docName = (link.innerText || '').trim() || 'dokumentas';
+      capturedUrl = null;
+
+      try {
+        link.click();
+        await new Promise(r => setTimeout(r, 400));
+
+        if (!capturedUrl) {
+          appendLog(`  ⚠️ ${docName}: URL nerastas`);
+          continue;
+        }
+
+        appendLog(`  ⬇️ ${docName}...`);
+        const binary = await downloadBinary(capturedUrl);
+
+        // Pabandyti išgauti failo pavadinimą iš URL arba naudoti dokumento pavadinimą
+        let fileName = docName;
+        const urlMatch = capturedUrl.match(/\/([^/]+)\/task_id\//);
+        // Pridėti .pdf plėtinį jei trūksta
+        if (!fileName.match(/\.[a-zA-Z]{2,5}$/)) fileName += '.pdf';
+
+        const fileInfo = await uploadToPropoint(binary, fileName);
+        await gmFetch('POST', `${PROPOINT}/api/tasks/${taskId}/attachments`, {
+          id: fileInfo.id || uid(),
+          name: fileInfo.name || fileName,
+          filename: fileInfo.filename,
+          size: fileInfo.size || binary.byteLength,
+          url: fileInfo.url,
+        });
+
+        appendLog(`  ✅ ${docName}`);
+        uploaded++;
+      } catch(e) {
+        appendLog(`  ❌ ${docName}: ${e.message}`);
+      }
+    }
+
+    unsafeWindow.open = origOpen; // atstatyti originalų window.open
+    return uploaded;
+  }
+
   // ── Ištraukti visus laukus iš detalaus puslapio ─────────────
-  // Struktūra: eilutė "Laukas:" → kita eilutė yra reikšmė
   function extractAllFields() {
     const editPage = document.querySelector('#task_edit_page');
     if (!editPage) return null;
@@ -152,18 +250,28 @@
         appendLog(`📍 ${d['Objektas'] || '?'}`);
         appendLog(`🏠 ${d['Objekto adresas'] || '?'}`);
 
-        // Patikrinti ar jau importuota
         const tivisCode = d['Užsakymo Nr.'];
         const invNr = d['Investicinis numeris'];
+
+        // Patikrinti ar jau importuota
+        let existingTask = null;
         try {
           const existing = await gmFetch('GET', `${PROPOINT}/api/tasks`);
-          const dup = existing.find(t => t.tivisCode === tivisCode || t.projectNumber === invNr);
-          if (dup) {
-            appendLog(`<br>⏭ Jau importuota kaip: <strong>${dup.name}</strong>`);
-            appendLog(`🔗 <a href="${PROPOINT}" target="_blank">Atidaryti Propoint →</a>`);
-            btn.disabled = false; btn.innerHTML = '⬆ Importuoti į Propoint'; return;
-          }
+          existingTask = existing.find(t => t.tivisCode === tivisCode || t.projectNumber === invNr);
         } catch(e) {}
+
+        if (existingTask) {
+          appendLog(`<br>⏭ Jau importuota: <strong>${existingTask.name}</strong>`);
+          // Vis tiek siūlome atnaujinti dokumentus
+          const hasLinks = document.querySelectorAll('[ng-click*="downloadDocument"]').length;
+          if (hasLinks) {
+            appendLog(`📎 Atnaujinami dokumentai...`);
+            const n = await extractAndUploadDocs(existingTask.id, appendLog);
+            if (n > 0) appendLog(`<br>✅ Įkelta dokumentų: <strong>${n}</strong>`);
+          }
+          appendLog(`🔗 <a href="${PROPOINT}" target="_blank">Atidaryti Propoint →</a>`);
+          btn.disabled = false; btn.innerHTML = '⬆ Importuoti į Propoint'; return;
+        }
 
         const descLines = [
           d['Darbų rūšis']                   ? `Darbų rūšis: ${d['Darbų rūšis']}`                          : '',
@@ -191,86 +299,4 @@
           description:   descLines,
           deadline:      d['Sutarties pabaiga'] || '',
           priority:      'Vidutinis',
-          status:        mapStatus(d['Būsena']),
-          createdAt:     new Date().toISOString(),
-        };
-
-        const r = await gmFetch('POST', `${PROPOINT}/api/tasks`, task);
-        if (r._skip) {
-          appendLog('<br>⏭ Ši užduotis jau egzistuoja Propoint sistemoje.');
-        } else {
-          appendLog(`<br>✅ <strong>Sėkmingai importuota!</strong>`);
-          appendLog(`🔗 <a href="${PROPOINT}" target="_blank">Atidaryti Propoint →</a>`);
-        }
-
-      } else {
-        // ── SĄRAŠO PUSLAPIS: masinis importas ────────────────
-        appendLog('📋 Sąrašo puslapis — masinis importas...');
-
-        let tivisTasks = [];
-        try {
-          const scope = angular.element(document.querySelector('[ng-controller]')).scope();
-          tivisTasks = scope.items || scope.tasks || [];
-        } catch(e) {}
-
-        if (!tivisTasks.length) {
-          appendLog('❌ Užduotys nerastos. Palaukite kol puslapis įsikraus.');
-          btn.disabled = false; btn.innerHTML = '⬆ Importuoti viską į Propoint'; return;
-        }
-        appendLog(`📂 Rasta: <strong>${tivisTasks.length}</strong> užduočių`);
-
-        const existing = await gmFetch('GET', `${PROPOINT}/api/tasks`).catch(() => []);
-        const existingCodes = new Set(existing.map(t => t.tivisCode).filter(Boolean));
-
-        let imported = 0, skipped = 0, errors = 0;
-        for (const t of tivisTasks) {
-          const code = t.task_code || t.work_code || String(t.id);
-          if (existingCodes.has(code)) { skipped++; continue; }
-
-          const task = {
-            id:            uid(),
-            tivisCode:     code,
-            tivisId:       String(t.id),
-            name:          t.object_name || `TIVIS ${t.id}`,
-            projectNumber: t.investment_nr || '',
-            address:       t.object_address || '',
-            client:        'ESO',
-            type:          t.work_kind || '',
-            description:   [
-              t.work_kind  ? `Darbų rūšis: ${t.work_kind}`  : '',
-              t.supervisor ? `Vadovas: ${t.supervisor}`      : '',
-              t.defect_nr  ? `Defekto nr.: ${t.defect_nr}`  : '',
-              t.region     ? `Rajonas: ${t.region}`         : '',
-              t.ward       ? `Seniūnija: ${t.ward}`         : '',
-            ].filter(Boolean).join('\n'),
-            deadline:      t.deadline || '',
-            priority:      'Vidutinis',
-            status:        'new',
-            createdAt:     new Date().toISOString(),
-          };
-
-          try {
-            const r = await gmFetch('POST', `${PROPOINT}/api/tasks`, task);
-            if (r._skip) { skipped++; }
-            else { imported++; appendLog(`✅ ${task.name}`); }
-          } catch(e) {
-            errors++;
-            appendLog(`❌ ${task.name}: ${e.message}`);
-          }
-          await new Promise(r => setTimeout(r, 25));
-        }
-
-        appendLog(`<br>✅ Importuota: <strong>${imported}</strong> | ⏭ Praleista: <strong>${skipped}</strong> | ❌ Klaidos: <strong>${errors}</strong>`);
-        if (imported > 0) appendLog(`🔗 <a href="${PROPOINT}" target="_blank">Atidaryti Propoint →</a>`);
-      }
-
-    } catch (e) {
-      appendLog(`💥 Kritinė klaida: ${e.message}`);
-    }
-
-    btn.disabled = false;
-    btn.innerHTML = isDetailPage() ? '⬆ Importuoti į Propoint' : '⬆ Importuoti viską į Propoint';
-  });
-
-})();
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             
+          statu
